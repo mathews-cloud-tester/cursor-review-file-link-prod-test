@@ -21,3 +21,12 @@ no lint configuration**. As a result:
 
 If real application code is added later (e.g. a `package.json` or `requirements.txt`
 appears), update the startup script and this section accordingly.
+
+### Optional GitHub OAuth browser session
+
+For browser-based testing that needs a **fully authenticated GitHub OAuth session**,
+use the Desktop pane login external action (`desktop_login`) when needed. This is
+**optional**: a seeded local browser session may already be enough, and CLI `gh`
+auth (token in `~/.config/gh`) is separate from browser cookies and does not
+satisfy OAuth UI flows. Session/cookie persistence in VM snapshots depends on
+GitHub and may expire or be invalidated.

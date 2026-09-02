@@ -1,1 +1,360 @@
-initial
+GLINT-3308 Cursor Review file-link fixture
+Owned file for CODEOWNERS review navigation (`* @mathews-cloud-tester`).
+The remainder of this file is a long-form history of compiler design, covering
+lexical analysis, parsing, optimization, and code generation, so that review
+comments can target many stable line ranges in a single owned path.
+
+================================================================================
+A History of Compiler Design: Lexing, Parsing, Optimization, and Code Generation
+================================================================================
+
+Compilers occupy an unusual place in the history of computing. They are
+programs whose sole purpose is to turn other programs into still other
+programs, and yet the ideas they embody have shaped almost every layer of
+software we now take for granted. Register allocation, static analysis, type
+systems, virtual machines, and even large parts of programming-language
+semantics grew up inside compiler research before they migrated outward. To
+tell the history of compiler design is therefore to tell a history of how
+programmers learned to trust machines with the translation of human intent.
+
+That history is often taught as a pipeline: a scanner turns characters into
+tokens, a parser turns tokens into trees, an optimizer rewrites those trees
+(or some later intermediate form) into something cheaper, and a code generator
+emits machine instructions. The pipeline is a useful pedagogical fiction. In
+practice the stages have always leaked into one another, and each era of
+compiler design is best understood as a period in which one of those stages
+became the intellectual center of gravity. This essay follows those centers of
+gravity in chronological order: the long struggle to make lexical analysis
+mechanical, the golden age of parsing theory, the rise of machine-independent
+optimization, and the successive reinventions of code generation from simple
+templates to just-in-time compilers and retargetable intermediate
+representations.
+
+I. Before compilers: the problem of speaking to the machine
+-----------------------------------------------------------
+
+Early electronic computers were programmed in absolute machine code or in
+slightly more palatable assembly languages. Grace Hopper, working on the
+UNIVAC in the early 1950s, argued that this was a waste of scarce human
+attention. If a machine could be made to expand mnemonic macros and to
+substitute symbolic names for addresses, then programmers could write in a
+notation closer to mathematics and English. The A-0 system and its successors
+are sometimes called the first compilers; they were closer to what we would
+now call assemblers and linkers with ambitious macro facilities. The
+conceptual leap they represent is still the compiler's original promise: that
+a program can be a specification of meaning rather than a sequence of
+toggle-switch operations.
+
+FORTRAN, begun at IBM under John Backus in 1954 and delivered in 1957, is the
+first compiler that a modern designer would recognize as such. It had to
+solve every stage of the pipeline at once, with almost no theory to lean on.
+The FORTRAN team invented register allocation heuristics, common-subexpression
+elimination, and rudimentary control-flow analysis because the generated code
+had to rival hand-written assembly or the project would be dismissed as a
+curiosity. The success of FORTRAN I is one of the great empirical results in
+computer science: it showed that automatic translation could be efficient
+enough for production numerical work. Everything that followed was, in one
+way or another, an attempt to make that miracle systematic.
+
+ALGOL 60 supplied the other founding document. Where FORTRAN was an
+engineering triumph, ALGOL was a linguistic one. Backus-Naur Form (BNF) gave
+the community a notation for context-free syntax, nested scopes forced
+compilers to think about environments, and the idea of a machine-independent
+language made retargetability a first-class concern. The 1960s compilers for
+ALGOL, COBOL, Lisp, and a swarm of experimental languages were still largely
+hand-crafted, but they established the vocabulary: lexical tokens, syntax
+trees, symbol tables, and intermediate code.
+
+II. The lexical analysis era: from ad-hoc scanners to regular languages
+------------------------------------------------------------------------
+
+Lexical analysis is the least glamorous stage of a compiler and, for a long
+time, the most tediously handwritten. A scanner must recognize identifiers,
+keywords, numbers, strings, comments, and a zoo of punctuation, while keeping
+track of source locations for later diagnostics. Early compilers implemented
+this with large switch statements, character-class tables, and a great deal of
+special-case logic for Fortran's column-sensitive layout or COBOL's verbose
+noise words.
+
+The theoretical clarification arrived from automata theory. Kleene's regular
+events, Rabin and Scott's nondeterministic finite automata, and the subset
+construction that turns an NFA into a DFA together implied that a huge class
+of lexical patterns could be compiled into a single efficient machine. Ken
+Thompson's regular-expression search in QED and, later, grep, showed that the
+same theory was useful outside compilers. For compiler writers the decisive
+artifact was Lex, built by Mike Lesk and Eric Schmidt at Bell Labs in the
+mid-1970s. Lex took a list of regular expressions with associated actions and
+generated a DFA-based scanner in C. Flex, by Vern Paxson, later became the
+open-source workhorse. The practical lesson was as important as the
+theoretical one: lexical analysis could be generated from a declarative
+specification, tested independently of the parser, and replaced without
+rewriting the rest of the compiler.
+
+Several hard problems kept scanner design from becoming a solved exercise.
+Longest-match and rule-priority conventions had to be standardized so that
+"if" was a keyword rather than an identifier, and so that "<=" was one token
+rather than two. Nested comments, which are not regular, forced either
+special start conditions or a retreat to hand-written scanners. Unicode and
+international identifiers exploded the character-class tables that 1970s tools
+had taken for granted. Modern compilers often still use generated scanners
+for the boring bulk of the language and hand-written code for the awkward
+corners: raw string literals, nested block comments, Python's off-side rule,
+or Fortran's lexical ambiguity between keywords and identifiers.
+
+The deeper legacy of the lexical era is the idea that a compiler front end
+can be a composition of formalisms. Regular languages are the right tool for
+local, bounded patterns. Context-free grammars, the subject of the next era,
+are the right tool for nested structure. The clean cut between the two is an
+engineering convenience rather than a theorem about programming languages,
+but it is a convenience that has lasted fifty years.
+
+III. The parsing era: grammars, conflicts, and the shape of programs
+--------------------------------------------------------------------
+
+Once tokens exist, the compiler must recover phrase structure: expressions,
+statements, declarations, and the recursive nestings that make programming
+languages more than concatenations of words. The 1960s and 1970s turned this
+problem into one of the most complete applied theories in computer science.
+
+Noam Chomsky's hierarchy had already classified grammars. Compiler writers
+needed algorithms. Recursive-descent parsing, the oldest practical method,
+is simply writing a function per nonterminal and letting the call stack
+remember the nesting. It is still the method of choice for many production
+front ends because it produces excellent error messages and admits arbitrary
+semantic actions. Its weakness is well known: left recursion must be
+eliminated, and lookahead must be managed by hand. Pratt parsing and
+precedence-climbing parsers later gave recursive descent a principled way to
+handle operator hierarchies without a thicket of nonterminals.
+
+Bottom-up parsing offered the opposite trade: the tool would take a grammar
+and generate a table-driven machine. Knuth's LR parsing, published in 1965,
+showed that a large class of unambiguous grammars could be parsed
+deterministically in linear time with a stack and a finite set of states.
+The full LR(1) tables were enormous. DeRemer and Penello's LALR(1)
+compromise, implemented in Yacc by Steve Johnson in 1975, made the method
+practical. Yacc ("Yet Another Compiler-Compiler") and its descendants Bison
+and many language-specific clones became the default way to specify syntax
+for a generation. A grammar plus precedence declarations plus a handful of
+semantic actions was enough to obtain a working parser, a discipline that
+fitted perfectly with the Unix philosophy of little languages.
+
+The parsing era was also an era of conflict. Shift/reduce and reduce/reduce
+conflicts forced grammar authors to understand their languages more deeply
+than recursive descent ever required. The dangling-else problem, the
+ambiguity of C's typedef names, and the "lexer hack" needed to parse C and
+C++ became folklore. GLR parsing, developed by Tomita and later refined for
+programming languages by McPeak, Grimm, and others, offered a way to live
+with ambiguity: explore all interpretations in parallel and let later
+context, or an explicit tie-breaker, discard the wrong ones. Packrat parsers
+and parsing expression grammars (PEGs), popularized by Ford in the 2000s,
+took a different route, replacing ambiguity with prioritized choice and
+memoization. Each of these techniques is still in production use. GCC's C++
+front end is a carefully engineered recursive-descent parser; many language
+tools use PEGs; Rust's rustc uses an LL-style parser with dedicated recovery;
+some SQL engines still carry Yacc pedigrees.
+
+Error recovery deserves a special mention, because it is where theory most
+often surrendered to craft. A compiler that stops at the first syntax error
+is a toy. Panic-mode recovery (discard tokens until a synchronizing
+delimiter), phrase-level repair, and, more recently, error-tolerant packrat
+and GLR techniques all exist to keep the parser moving so that the user sees
+more than one diagnostic per run. The quality of recovery is one of the
+unheralded differences between a research parser and a compiler people will
+tolerate.
+
+By the late 1980s, parsing was widely regarded as a solved problem in the
+narrow sense that linear-time algorithms existed for the grammars people
+actually wanted to write. The unsolved remainder was linguistic: how to
+specify the syntax of C++, of indentation-sensitive languages, of macros that
+rewrite syntax before it is parsed, of gradually typed languages whose
+surface forms are intentionally forgiving. Those problems did not dethrone
+the classic algorithms so much as surround them with preprocessors, name
+resolution, and post-parse tree rewrites.
+
+IV. Intermediate representations and the birth of optimization as a field
+------------------------------------------------------------------------
+
+Code improvement began as a collection of clever tricks in FORTRAN I and
+blossomed into a field when researchers realized that most interesting
+rewrites could be expressed on a language-independent intermediate form.
+Three-address code, quadruples, triples, and trees all had advocates. The
+crucial conceptual move was to separate the front end, which understands a
+source language, from the optimizer and back end, which understand a machine
+or at least a machine-like intermediate language.
+
+Control-flow graphs, basic blocks, and data-flow analysis, developed through
+the 1970s by Frances Allen, John Cocke, Gary Kildall, and many others, gave
+optimization a mathematics. Reaching definitions, live variables, available
+expressions, and very busy expressions could be computed by iterative
+fixpoints on lattices. Kildall's framework made it possible to see a dozen
+apparently different passes as instances of one pattern: transfer functions
+on a graph, monotonic, and therefore guaranteed to terminate. Allen's work
+at IBM, later recognized with a Turing Award, showed that these analyses
+could be engineered into production compilers for real architectures.
+
+The 1980s added interprocedural analysis, alias analysis, and a growing
+awareness that optimization without precise knowledge of memory was a
+guessing game. Fortran's restricted aliasing made aggressive optimization
+comparatively honest; C's pointers made it comparatively brave. Dependence
+analysis for loops, developed for automatic vectorization and parallelization
+at Illinois, Rice, and elsewhere, treated array index expressions as
+algebraic objects. The dream of the automatic parallelizing compiler was only
+partly fulfilled, but the dependence machinery survives in every serious
+autovectorizer.
+
+Static single assignment form (SSA) is the hinge on which modern optimization
+turns. Proposed in the late 1980s by Rosen, Wegman, Zadeck, Cytron, and
+colleagues, SSA arranges that each variable is assigned exactly once, with
+phi functions at control-flow merges. Classical data-flow problems become
+simpler; sparse algorithms become natural; a host of rewrites (constant
+propagation, global value numbering, dead code elimination, strength
+reduction, and more) compose cleanly. Almost every serious compiler since the
+late 1990s has used SSA or a close relative. LLVM IR is an SSA form.
+GCC's GIMPLE is an SSA form. HotSpot's C2 compiler, JavaScript JITs, and
+many research systems adopted the same discipline.
+
+High-level optimizations grew alongside the low-level ones. Inlining,
+devirtualization, escape analysis, scalar replacement of aggregates, and
+partial evaluation blur the line between language implementation and
+optimization. Functional-language compilers contributed continuation-passing
+style, closure conversion, and strictness analysis. Object-oriented compilers
+contributed class-hierarchy analysis and speculative devirtualization with
+deoptimization as a safety net. The optimizer ceased to be a machine-code
+polisher and became a place where language semantics are exploited.
+
+V. The code generation era: from templates to the allocation of scarcity
+------------------------------------------------------------------------
+
+Code generation is the art of making finite machines do infinite-looking
+work. Early generators were templates: walk the tree, emit a naive
+instruction sequence, hope the optimizer had already done enough. That
+approach collapses as soon as the machine has a small register file, delay
+slots, or a zoo of addressing modes.
+
+Register allocation became the emblematic back-end problem. Graph coloring,
+introduced to compilers by Chaitin and colleagues at IBM, models live ranges
+as vertices and interference as edges; a k-coloring is an assignment to k
+registers. Spilling, coalescing, and live-range splitting turned the elegant
+NP-complete picture into a family of heuristics that still dominate teaching
+and, in various forms, production. Linear-scan allocation, popularized by
+Poletto and Sarkar and later refined in JIT compilers, traded optimality for
+speed, which is the right trade when compilation itself is on the user's
+critical path. SSA-based allocation, as in the work of Hack, Paleczny, and
+the LLVM community, brought the two eras together.
+
+Instruction selection is the other classic back-end problem: how to cover an
+intermediate tree or DAG with machine instructions of unequal power. Maximal
+munch, dynamic programming over trees (as in BURS and iburg), and, later,
+DAG combiners and machine-description files all tried to make retargeting a
+matter of writing a specification rather than a new compiler. GCC's RTL and
+machine-description macros, the lcc code generator of Fraser and Hanson, and
+LLVM's SelectionDAG and GlobalISel are successive answers to the same
+question. VLIW and EPIC architectures briefly made instruction scheduling and
+bundling as important as selection; out-of-order superscalar machines then
+moved some of that burden back into hardware, without ever making software
+scheduling irrelevant.
+
+The reduced-instruction-set movement of the 1980s changed the economics of
+code generation. If the hardware exposed a simple load-store machine, the
+compiler's job became more important, not less: delay slots, exposed
+pipelines, and an insistence that compilers, not microcode, should implement
+high-level operations. Patterson, Hennessy, and the compilers that accompanied
+MIPS, SPARC, and later ARM made this argument concrete. The later return of
+CISC in the form of x86, with micro-op translation inside the processor, did
+not restore the old template generators; it produced hybrids in which the
+compiler still thinks in RISC-like three-address code while the processor
+thinks in fused operations and cache lines.
+
+Just-in-time compilation reopened every back-end question under a latency
+budget. Smalltalk, Self, and the Deutsch-Schiffman dynamic translation work
+showed that runtime type feedback could beat static guesses. Java's HotSpot,
+JavaScript engines such as V8, SpiderMonkey, and JavaScriptCore, and the
+tracing JITs used in some Lua and JavaScript implementations all treat code
+generation as a speculative, layered activity: interpret first, compile
+cheaply, compile better, and be prepared to deoptimize when speculation
+fails. Register allocation must be fast. Instruction selection must be good
+enough. The interesting design problem is not a single perfect instruction
+sequence but a policy for spending compile time.
+
+VI. Retargetability, virtual machines, and the modern stack
+-----------------------------------------------------------
+
+A persistent dream of the optimization and code-generation eras was a
+compiler that could be retargeted by writing a machine description rather
+than a new program. UNCOL in the 1950s was an early, unsuccessful attempt at
+a universal intermediate language. P-code for Pascal, the JVM, and the .NET
+CIL succeeded by narrowing the dream: a virtual machine for a family of
+languages, not for all languages and all machines. GCC showed that a single
+optimizer could serve many source languages and many processors if the
+intermediate representation was carefully chosen and the community was large
+enough to bear the cost of machine descriptions. LLVM, begun by Chris Lattner
+and Vikram Adve, made the same argument with a cleaner SSA IR, a library
+architecture, and a license that encouraged adoption in industry. Clang,
+Rustc's LLVM back end, Swift, Julia, and a long list of research languages
+turned LLVM into the default code-generation platform of the 2010s.
+
+MLIR, emerging from Google and the LLVM community in the late 2010s,
+generalized the lesson again. Different abstraction levels want different
+intermediate languages: tensor operations for machine learning, loops for
+scientific codes, CFG-plus-SSA for scalar optimization, and machine
+instructions for emission. A compiler is no longer one IR with a few
+lowerings; it is a stack of dialects with explicit conversions. That is an
+old idea (GCC's GENERIC, GIMPLE, and RTL already formed a stack) restated
+with better tooling for extensible IRs.
+
+WebAssembly added a new code-generation target that is neither a physical
+machine nor a language-specific VM. Its linear memory, structured control
+flow, and evolving SIMD and garbage-collection extensions have forced
+compilers to treat the browser (and the Wasm runtime outside the browser) as
+a first-class back end. Source maps, debug information, and the tension
+between compact download size and optimized execution recapitulate, in a new
+key, the old FORTRAN requirement that generated code be good enough to
+replace the thing people used before.
+
+VII. What the four eras leave us
+--------------------------------
+
+Lexical analysis taught us that local structure can be generated from regular
+formalisms and that the remaining irregularities of real languages are a
+small, if annoying, residual. Parsing taught us that nested structure has a
+rich algorithmic theory and that the practical problem is often error
+recovery, ambiguity, and the interaction with name resolution rather than the
+existence of an algorithm. Optimization taught us that most of a compiler's
+value after correctness is a collection of rewrites on a well-chosen
+intermediate form, and that SSA is the most successful such form yet found.
+Code generation taught us that machines are exercises in scarcity (registers,
+issue width, cache, compile time) and that the back end is where language
+independence goes to die unless the IR and the machine descriptions are
+engineered with unusual care.
+
+The pipeline metaphor survives because it is a good way to assign
+responsibilities. It fails as history because each era left residue in the
+others. Scanners consult symbol tables in C. Parsers perform limited type
+analysis to resolve ambiguities. Optimizers invent new IRs that look like
+source-level constructs. Code generators re-do peephole optimization that an
+earlier pass could have done. Production compilers are archaeological sites:
+a generated lexer here, a hand-written Pratt parser there, an SSA optimizer
+in the middle, a table-driven instruction selector at the bottom, and a JIT
+policy wrapped around the whole thing.
+
+If there is a fifth era, it is already underway, and it is not a new stage
+in the pipeline so much as a new way of filling the old stages. Machine
+learning has been used to predict inlining, to allocate registers, to
+schedule instructions, and to search superoptimizer spaces. Language models
+now write code that compilers must accept, which quietly raises the value of
+diagnostics and of undefined-behavior sanitizers. Hardware has become a zoo
+of vector units, matrix accelerators, and explicitly managed memories, which
+pulls domain-specific IRs and scheduling into the center of compiler design
+the way RISC once pulled instruction selection there.
+
+The FORTRAN team's original bet remains the right one. Programmers will write
+in notations that fit their problems. Machines will execute instruction sets
+that fit their transistors. Compilers will stand in between, and the quality
+of that standing-in-between will continue to depend on four crafts that
+matured in different decades: how we recognize words, how we recover
+structure, how we rewrite meaning into cheaper meaning, and how we assign
+that meaning to the finite resources of a machine. The tools change. The
+division of labor has proven remarkably stable. That stability is the real
+inheritance of compiler design, and it is why a file that exists only to be
+linked from a review comment can still be a reasonable place to remember how
+the craft was built.
